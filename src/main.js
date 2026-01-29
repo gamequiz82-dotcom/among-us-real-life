@@ -1,5 +1,5 @@
 import './style.css';
-import { renderGamePage } from './gamePage';
+import { renderGamePage } from './gamePage.jsx';
 import { ref, onValue } from "firebase/database";
 import { db } from "./firebase";
 

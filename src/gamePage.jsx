@@ -1,17 +1,15 @@
-import { ref, set, onValue } from "firebase/database";
+import { ref, set, onValue, runTransaction } from "firebase/database";
 import { db } from "./firebase"; 
 import { floorTasks } from "./tasks";
 
 /**
- * وظيفة رسم صفحة اللعبة وتوزيع الأدوار
- * @param {HTMLElement} container - العنصر الذي سيتم رسم الصفحة بداخله
- * @param {string} playerName - اسم اللاعب
+ * وظيفة رسم صفحة اللعبة وتوزيع الأدوار والمهام
  */
 export function renderGamePage(container, playerName) {
-    // تحديد الدور (20% محتال)
+    // تحديد الدور عشوائياً لكل لاعب (20% محتال)
     const isImposter = Math.random() < 0.20;
 
-    // 1. بناء هيكل الواجهة (HTML)
+    // 1. بناء واجهة البطاقة والمهام
     container.innerHTML = `
         <div id="screen-game" class="container">
             <div id="role-card" class="card ${isImposter ? 'imposter' : 'crewmate'}">
@@ -20,8 +18,16 @@ export function renderGamePage(container, playerName) {
                 </div>
                 <div class="card-body">
                     <p class="player-label">اللاعب: <strong>${playerName}</strong></p>
+                    
+                    <div class="progress-container">
+                        <span>إجمالي مهام الطاقم:</span>
+                        <div class="progress-bar-bg">
+                            <div id="global-progress-fill" class="progress-fill"></div>
+                        </div>
+                    </div>
+
                     <div id="tasks-section" class="tasks-box">
-                        <h3>قائمة المهام المطلوبة:</h3>
+                        <h3>مهامك الشخصية:</h3>
                         <ul id="tasks-list"></ul>
                     </div>
                 </div>
@@ -33,17 +39,23 @@ export function renderGamePage(container, playerName) {
     `;
 
     const list = document.getElementById('tasks-list');
+    const progressFill = document.getElementById('global-progress-fill');
 
-    // 2. توزيع المهام بناءً على الدور
+    // 2. مراقبة العداد العالمي وتحديث الشريط عند الجميع
+    onValue(ref(db, 'game/score'), (snap) => {
+        const totalScore = snap.val() || 0;
+        const winTarget = 20; // الهدف الكلي لجميع اللاعبين
+        const percentage = Math.min((totalScore / winTarget) * 100, 100);
+        if (progressFill) {
+            progressFill.style.width = percentage + "%";
+        }
+    });
+
+    // 3. توزيع المهام بناءً على الدور
     if (isImposter) {
-        // واجهة المحتال
-        list.innerHTML = `
-            <li class="imposter-task">😈 تخلص من أفراد الطاقم بصمت.</li>
-            <li class="imposter-task">😈 قم بتخريب الأجهزة في الطوابق.</li>
-            <li class="imposter-task">😈 تظاهر بأنك تقوم بالمهام العادية.</li>
-        `;
+        list.innerHTML = `<li class="imposter-task">😈 تخلص من الطاقم خفية وعطل مهامهم!</li>`;
     } else {
-        // واجهة المسالم (توزيع 4 مهام عشوائية)
+        // اختيار 4 مهام عشوائية للمسالم
         const myTasks = [...floorTasks].sort(() => 0.5 - Math.random()).slice(0, 4);
         
         myTasks.forEach(item => {
@@ -56,39 +68,33 @@ export function renderGamePage(container, playerName) {
                 </label>
             `;
             
-            // مستمع الحدث عند إكمال المهمة
             const checkbox = li.querySelector('input');
             checkbox.onchange = (ev) => {
                 if (ev.target.checked) {
                     li.classList.add('completed');
-                    checkbox.disabled = true; // منع إلغاء المهمة بعد إكمالها
-                    updateGlobalScore();
+                    checkbox.disabled = true; 
+                    incrementGlobalScore(); // زيادة العداد عند الجميع
                 }
             };
             list.appendChild(li);
         });
     }
 
-    // 3. منطق زر الإبلاغ (Report)
-    const reportBtn = document.getElementById('btn-report');
-    if (reportBtn) {
-        reportBtn.onclick = () => {
-            set(ref(db, 'game/alarm'), true);
-            alert("📢 تم الإرسال! اجتمعوا الآن لمناقشة من هو المحتال!");
-            // إغلاق الإنذار تلقائياً بعد 5 ثوانٍ
-            setTimeout(() => set(ref(db, 'game/alarm'), false), 5000);
-        };
-    }
+    // 4. منطق زر الإبلاغ
+    document.getElementById('btn-report').onclick = () => {
+        set(ref(db, 'game/alarm'), true);
+        alert("📢 بلاااااغ! جثة مكتشفة!");
+        setTimeout(() => set(ref(db, 'game/alarm'), false), 5000);
+    };
 }
 
 /**
- * تحديث النقاط الكلية في قاعدة البيانات
+ * دالة زيادة العداد العالمي في Firebase بطريقة آمنة
  */
-function updateGlobalScore() {
+function incrementGlobalScore() {
     const scoreRef = ref(db, 'game/score');
-    // استخدام onlyOnce لضمان عدم حدوث Loop (حلقة مفرغة) عند التحديث
-    onValue(scoreRef, (snap) => {
-        const currentScore = snap.val() || 0;
-        set(scoreRef, currentScore + 1);
-    }, { onlyOnce: true });
+    // نستخدم Transaction لضمان عدم حدوث تداخل إذا أنهى شخصان مهمة في نفس الثانية
+    runTransaction(scoreRef, (currentScore) => {
+        return (currentScore || 0) + 1;
+    });
 }

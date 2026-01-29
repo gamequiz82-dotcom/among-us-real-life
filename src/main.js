@@ -1,69 +1,84 @@
 import './style.css';
-import { renderHome } from './homePage.jsx'; 
+import { renderHome } from './homePage.js'; 
 import { renderGamePage } from './gamePage.jsx';
-import { ref, onValue, set } from "firebase/database";
+import { ref, set, get, update } from "firebase/database";
 import { db } from "./firebase";
 
 const appDiv = document.getElementById('app');
 
-// 1. الوظيفة الأساسية لتشغيل التطبيق (تبدأ بصفحة الهوم)
+/**
+ * دالة لتوليد رمز غرفة عشوائي مكون من 5 محارف
+ */
+function generateRoomCode() {
+    const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; // تجنب الأحرف المتشابهة مثل 0 و O
+    let code = '';
+    for (let i = 0; i < 5; i++) {
+        code += chars.charAt(Math.floor(Math.random() * chars.length));
+    }
+    return code;
+}
+
+/**
+ * 1. تشغيل التطبيق وعرض الصفحة الرئيسية
+ */
 function startApp() {
     renderHome(appDiv, () => {
-        // عند الضغط على "انضمام لغرفة" يتم استدعاء صفحة تسجيل الاسم
-        renderLogin();
+        // عند الضغط على "انضمام للعبة"
+        renderJoinFlow();
     });
 
-    // ربط منطق "إنشاء غرفة" ليكون متاحاً في صفحة الهوم
+    // منطق زر "إنشاء غرفة جديدة"
     const createBtn = document.getElementById('btn-create-room');
     if (createBtn) {
-        createBtn.onclick = () => {
-            if (confirm("هل تريد تصفير بيانات اللعبة وبدء غرفة جديدة؟")) {
-                // تصفير النقاط وحالة الإنذار في Firebase
-                set(ref(db, 'game'), { 
-                    score: 0, 
-                    alarm: false,
-                    state: "waiting" 
-                });
-                alert("تم إنشاء غرفة جديدة بنجاح!");
-            }
+        createBtn.onclick = async () => {
+            const name = prompt("أدخل اسمك كمنشئ للغرفة:");
+            if (!name) return;
+
+            const newCode = generateRoomCode();
+            
+            // إنشاء الغرفة في Firebase
+            await set(ref(db, `rooms/${newCode}`), {
+                status: "waiting",
+                score: 0,
+                host: name,
+                players: {
+                    [name]: { name: name, role: "waiting" }
+                }
+            });
+
+            alert(`تم إنشاء الغرفة! رمز الدخول هو: ${newCode}`);
+            // الانتقال لصفحة اللعبة (صالة الانتظار) كمسؤول
+            renderGamePage(appDiv, name, newCode, true); 
         };
     }
 }
 
-// 2. صفحة تسجيل الاسم (تظهر بعد اختيار "انضمام")
-function renderLogin() {
-    appDiv.innerHTML = `
-        <div id="screen-login" class="container">
-            <h1>تسجيل الدخول</h1>
-            <input type="text" id="username" placeholder="ادخل اسمك المستعار...">
-            <button id="btn-join" class="btn-main">دخول اللعبة</button>
-            <button id="btn-back" style="background:none; color:gray; border:none; margin-top:15px; cursor:pointer;">🏠 العودة للرئيسية</button>
-        </div>
-    `;
+/**
+ * 2. تدفق الانضمام لغرفة موجودة
+ */
+async function renderJoinFlow() {
+    const code = prompt("أدخل رمز الغرفة (5 خانات):")?.toUpperCase();
+    if (!code) return;
 
-    // عند الضغط على دخول، ننتقل لصفحة اللعبة (توزيع البطاقة)
-    document.getElementById('btn-join').onclick = () => {
-        const name = document.getElementById('username').value.trim();
-        if (name) {
-            renderGamePage(appDiv, name);
-        } else {
-            alert("يرجى إدخال اسمك أولاً!");
-        }
-    };
+    // التحقق من وجود الغرفة في Firebase
+    const roomSnap = await get(ref(db, `rooms/${code}`));
+    
+    if (roomSnap.exists()) {
+        const name = prompt("أدخل اسمك المستعار للانضمام:");
+        if (!name) return;
 
-    // زر العودة للهوم
-    document.getElementById('btn-back').onclick = startApp;
+        // إضافة اللاعب للغرفة
+        await set(ref(db, `rooms/${code}/players/${name}`), {
+            name: name,
+            role: "waiting"
+        });
+
+        // الانتقال لصفحة اللعبة (صالة الانتظار) كلاعب عادي
+        renderGamePage(appDiv, name, code, false);
+    } else {
+        alert("عذراً، هذا الرمز غير موجود!");
+    }
 }
 
-// 3. مراقبة شريط المهام والإنذار بشكل دائم لضمان التحديث اللحظي
-onValue(ref(db, 'game/score'), (snap) => {
-    const bar = document.getElementById('progress-bar');
-    if (bar) {
-        const score = snap.val() || 0;
-        const percent = Math.min((score / 20) * 100, 100);
-        bar.style.width = percent + "%";
-    }
-});
-
-// بدء التطبيق عند تحميل الصفحة
+// تشغيل التطبيق
 startApp();
